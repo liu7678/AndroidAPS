@@ -175,6 +175,12 @@ android {
         }
     }
 
+// 定义签名相关函数
+fun getStoreFile(): String = file("../keystore/myrelease.jks").absolutePath
+fun getStorePassword(): String = System.getenv("STORE_PASSWORD") ?: ""
+fun getKeyAlias(): String = "mykey"  // ✅ 与 keytool 中一致
+fun getKeyPassword(): String = System.getenv("KEY_PASSWORD") ?: ""
+
     signingConfigs {
         create("release") {
             storeFile = file(getStoreFile())
