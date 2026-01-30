@@ -134,14 +134,12 @@ android {
         }
     }
 
-    // ✅ 修复：签名配置 —— 不设置任何密码或别名，让 injected 参数生效
+    // ✅ 正确的签名配置：只指定文件路径，其他由 -Pandroid.injected.signing.* 自动注入
     signingConfigs {
         create("release") {
             storeFile = file("../keystore/myrelease.jks")
-            // 注意：以下字段留空！Gradle 会自动使用 -Pandroid.injected.signing.* 参数
-            // storePassword = ...
-            // keyPassword = ...
-            // keyAlias = ...
+            // 注意：不要设置 storePassword、keyPassword、keyAlias！
+            // Android Gradle Plugin 会自动使用命令行注入的参数
         }
     }
 
