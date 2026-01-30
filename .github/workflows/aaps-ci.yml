@@ -72,10 +72,13 @@ jobs:
           fi
           echo "✅ All required secrets are present."
 
-      - name: Decode keystore file
+      - name: Copy keystore to project path (to fix hardcoded path)
         run: |
-          mkdir -p "$RUNNER_TEMP/keystore"
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore/keystore.jks"
+          # 在项目工作区创建 keystore 目录
+          mkdir -p "$GITHUB_WORKSPACE/keystore"
+          # 将解码出来的正确签名文件，复制到项目构建脚本所期望的旧路径
+          cp "$RUNNER_TEMP/keystore/keystore.jks" "$GITHUB_WORKSPACE/keystore/demokeystore.jks"
+          echo "✅ Copied keystore to the hardcoded project path: $GITHUB_WORKSPACE/keystore/demokeystore.jks"
 
       - name: Validating keystore, alias and password
         run: |
