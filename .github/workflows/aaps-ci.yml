@@ -23,32 +23,34 @@ jobs:
     name: Build AAPS
     runs-on: ubuntu-latest
     steps:
+      # 1. 解码密钥并加载到环境变量
       - name: Decode Secrets Keystore Set and Oauth2 to Env
         run: |
           if [ -n "${{ secrets.KEYSTORE_SET }}" ]; then
             echo "🔐 Decoding KEYSTORE_SET..."
             DECODED=$(echo "${{ secrets.KEYSTORE_SET }}" | base64 -d)
             KEYSTORE_BASE64=$(echo "$DECODED" | cut -d'|' -f1)
-            KEYSTORE_PASSWORD=$(echo "$DECODED" | cut -d'|' -f2)
+            STORE_PASSWORD=$(echo "$DECODED" | cut -d'|' -f2)
             KEY_ALIAS=$(echo "$DECODED" | cut -d'|' -f3)
             KEY_PASSWORD=$(echo "$DECODED" | cut -d'|' -f4)
             echo "KEYSTORE_BASE64=$KEYSTORE_BASE64" >> $GITHUB_ENV
-            echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> $GITHUB_ENV
+            echo "STORE_PASSWORD=$STORE_PASSWORD" >> $GITHUB_ENV
             echo "KEY_ALIAS=$KEY_ALIAS" >> $GITHUB_ENV
             echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
             echo "::add-mask::$KEYSTORE_BASE64"
-            echo "::add-mask::$KEYSTORE_PASSWORD"
+            echo "::add-mask::$STORE_PASSWORD"
             echo "::add-mask::$KEY_ALIAS"
             echo "::add-mask::$KEY_PASSWORD"
             echo "✅ Keystore parameters extracted from KEYSTORE_SET"
           else
             echo "ℹ️ KEYSTORE_SET not provided, using separate secrets."
             echo "KEYSTORE_BASE64=${{ secrets.KEYSTORE_BASE64 }}" >> $GITHUB_ENV
-            echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> $GITHUB_ENV
             echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
             echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
           fi
 
+      # 2. 检查必要密钥是否存在
       - name: Check Secrets
         run: |
           echo "🔍 Checking required secrets..."
@@ -60,7 +62,7 @@ jobs:
             fi
           }
           check_secret "$KEYSTORE_BASE64" "KEYSTORE_BASE64"
-          check_secret "$KEYSTORE_PASSWORD" "KEYSTORE_PASSWORD"
+          check_secret "$STORE_PASSWORD" "STORE_PASSWORD"
           check_secret "$KEY_ALIAS" "KEY_ALIAS"
           check_secret "$KEY_PASSWORD" "KEY_PASSWORD"
           if [ "$MISSING" -eq 1 ]; then
@@ -69,99 +71,69 @@ jobs:
           fi
           echo "✅ All required secrets are present."
 
-      - name: Checkout source code
+      # 3. 获取源代码
+      - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      # 4. 在项目目录中解码并创建 keystore/demokeystore.jks 文件
       - name: Decode keystore file and place at hardcoded project path
         run: |
-          # 解码到临时位置
-          mkdir -p "$RUNNER_TEMP/keystore"
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore/keystore.jks"
-          # 关键：在 checkout 之后，将 keystore 放到项目期望的硬编码路径
-          mkdir -p "$GITHUB_WORKSPACE/keystore"
-          cp "$RUNNER_TEMP/keystore/keystore.jks" "$GITHUB_WORKSPACE/keystore/demokeystore.jks"
-          chmod 600 "$GITHUB_WORKSPACE/keystore/demokeystore.jks"
-          echo "✅ Keystore placed at: $GITHUB_WORKSPACE/keystore/demokeystore.jks"
+          echo "正在解码密钥库文件并创建到项目目录..."
+          mkdir -p ./keystore
+          echo "$KEYSTORE_BASE64" | base64 -d > ./keystore/demokeystore.jks
+          chmod 600 ./keystore/demokeystore.jks
+          ls -la ./keystore/
+          echo "✅ 密钥库已成功写入: ./keystore/demokeystore.jks"
 
-      - name: Validating keystore, alias and password
+      # 5. 验证密钥库和密码
+      - name: Validate Keystore and Credentials
         run: |
-          set -x
-          echo "🔐 Validating keystore, alias and password"
+          echo "🔐 Validating keystore, alias and password..."
           echo "test" > dummy.txt
           zip -q dummy.jar dummy.txt
           rm dummy.txt
-          JARSIGNER_LOG=$(mktemp)
-          if ! jarsigner \
-              -keystore "$GITHUB_WORKSPACE/keystore/demokeystore.jks" \
-              -storepass "$KEYSTORE_PASSWORD" \
-              -keypass "$KEY_PASSWORD" \
-              dummy.jar "$KEY_ALIAS" > "$JARSIGNER_LOG" 2>&1; then
-            echo "❌ Either KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_PASSWORD, or KEY_ALIAS is incorrect"
-            echo "🔍 jarsigner error output:"
-            cat "$JARSIGNER_LOG"
-            rm -f "$JARSIGNER_LOG" dummy.jar
+
+          if jarsigner -verify -verbose -keystore ./keystore/demokeystore.jks \
+             -storepass "$STORE_PASSWORD" \
+             -keypass "$KEY_PASSWORD" \
+             dummy.jar "$KEY_ALIAS"; then
+            echo "✅ 验证成功：密钥库、别名和密码均有效。"
+            rm -f dummy.jar
+          else
+            echo "❌ 验证失败：请检查 KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD, KEY_ALIAS 是否正确。"
+            rm -f dummy.jar
             exit 1
           fi
-          rm -f "$JARSIGNER_LOG" dummy.jar
-          echo "✅ Keystore, alias, and key password are valid."
 
-      - name: Set BUILD_VARIANT
-        run: |
-          BUILD_VARIANT="${{ github.event.inputs.buildVariant }}"
-          echo "BUILD_VARIANT=$BUILD_VARIANT" >> $GITHUB_ENV
-          VARIANT_FLAVOR=$(echo "$BUILD_VARIANT" | sed -E 's/(Release|Debug)$//' | tr '[:upper:]' '[:lower:]')
-          VARIANT_TYPE=$(echo "$BUILD_VARIANT" | grep -oE '(Release|Debug)$' | tr '[:upper:]' '[:lower:]')
-          echo "VARIANT_FLAVOR=$VARIANT_FLAVOR" >> $GITHUB_ENV
-          echo "VARIANT_TYPE=$VARIANT_TYPE" >> $GITHUB_ENV
-          VERSION_SUFFIX=""
-          if [[ "$VARIANT_FLAVOR" != "full" ]]; then VERSION_SUFFIX="$VARIANT_FLAVOR"; fi
-          if [[ "$VARIANT_TYPE" == "debug" ]]; then VERSION_SUFFIX="$VERSION_SUFFIX-debug"; fi
-          if [[ -n "$VERSION_SUFFIX" && "$VERSION_SUFFIX" != -* ]]; then VERSION_SUFFIX="-$VERSION_SUFFIX"; fi
-          echo "VERSION_SUFFIX=$VERSION_SUFFIX" >> $GITHUB_ENV
-
-      - name: Extract VERSION
-        run: |
-          BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-          if echo "$BRANCH_NAME" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-            VERSION="$BRANCH_NAME"
-          else
-            VERSION=$(grep 'val appVersion' buildSrc/src/main/kotlin/Versions.kt | awk -F '"' '{print $2}')
-          fi
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-
+      # 6. 设置 JDK
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: 21
+          java-version: '21'
           distribution: 'temurin'
-          cache: gradle
+          cache: 'gradle'
 
-      - name: Grant execute permission for gradlew
+      # 7. 为 gradlew 添加执行权限
+      - name: Make gradlew Executable
         run: chmod +x gradlew
 
+      # 8. 构建 APK
       - name: Build APKs
         run: |
-          ./gradlew :app:assemble${{ env.BUILD_VARIANT }} :wear:assemble${{ env.BUILD_VARIANT }} \
-            -Dorg.gradle.jvmargs="-Xmx8g -XX:+UseParallelGC -Xss1024m" \
-            -Dkotlin.daemon.jvm.options="-Xmx2g" \
-            -Dkotlin.compiler.execution.strategy="in-process" \
-            -Dorg.gradle.daemon=true \
-            -Dorg.gradle.workers.max=8 \
-            -Dorg.gradle.caching=true \
-            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/keystore/demokeystore.jks" \
-            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+          echo "开始构建签名APK..."
+          ./gradlew :app:assemble${{ github.event.inputs.buildVariant }} :wear:assemble${{ github.event.inputs.buildVariant }} \
+            -Pandroid.injected.signing.store.file=./keystore/demokeystore.jks \
+            -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+          echo "✅ APK 构建完成。"
 
-      - name: Rename APKs with version
-        run: |
-          mkdir -p renamed-apks
-          mv app/build/outputs/apk/${{ env.VARIANT_FLAVOR }}/${{ env.VARIANT_TYPE }}/*.apk renamed-apks/aaps-${{ env.VERSION }}${{ env.VERSION_SUFFIX }}.apk
-          mv wear/build/outputs/apk/${{ env.VARIANT_FLAVOR }}/${{ env.VARIANT_TYPE }}/*.apk renamed-apks/aaps-wear-${{ env.VERSION }}${{ env.VERSION_SUFFIX }}.apk
-
+      # 9. 上传构建产物
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: aaps-apks-${{ env.VERSION }}${{ env.VERSION_SUFFIX }}
-          path: renamed-apks/
+          path: |
+            app/build/outputs/apk/
+            wear/build/outputs/apk/
           retention-days: 7
