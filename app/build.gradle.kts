@@ -1,9 +1,7 @@
 import org.gradle.kotlin.dsl.debugImplementation
-import java.io.ByteArrayOutputStream
-import java.io.FileInputStream
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Properties
 
 plugins {
     alias(libs.plugins.ksp)
@@ -48,10 +46,7 @@ fun generateGitRemote(): String {
 }
 
 fun generateDate(): String {
-    val stringBuilder: StringBuilder = StringBuilder()
-    // showing only date prevents app to rebuild everytime
-    stringBuilder.append(SimpleDateFormat("yyyy.MM.dd").format(Date()))
-    return stringBuilder.toString()
+    return SimpleDateFormat("yyyy.MM.dd").format(Date())
 }
 
 fun isMaster(): Boolean = !Versions.appVersion.contains("-")
@@ -76,49 +71,14 @@ fun allCommitted(): Boolean {
         processBuilder.redirectOutput(output)
         val process = processBuilder.start()
         process.waitFor()
-        return output.readText().replace(Regex("""(?m)^\s*(M|A|D|\?\?)\s*.*?\.idea\/codeStyles\/.*?\s*$"""), "")
-            // ignore all files added to project dir but not staged/known to GIT
-            .replace(Regex("""(?m)^\s*(\?\?)\s*.*?\s*$"""), "").trim().isEmpty()
+        return output.readText()
+            .replace(Regex("""(?m)^\s*(M|A|D|\?\?)\s*.*?\.idea\/codeStyles\/.*?\s*$"""), "")
+            .replace(Regex("""(?m)^\s*(\?\?)\s*.*?\s*$"""), "")
+            .trim().isEmpty()
     } catch (_: Exception) {
         return false
     }
 }
-
-val keyProps = Properties()
-val keyPropsFile: File = rootProject.file("keystore/keystore.properties")
-keyProps.load(FileInputStream(keyPropsFile))
-fun getStoreFile(): String {
-    var storeFile = keyProps["storeFile"].toString()
-    if (storeFile.isEmpty()) {
-        storeFile = System.getenv("storeFile") ?: ""
-    }
-    return storeFile
-}
-
-fun getStorePassword(): String {
-    var storePassword = keyProps["storePassword"].toString()
-    if (storePassword.isEmpty()) {
-        storePassword = System.getenv("storePassword") ?: ""
-    }
-    return storePassword
-}
-
-fun getKeyAlias(): String {
-    var keyAlias = keyProps["keyAlias"].toString()
-    if (keyAlias.isEmpty()) {
-        keyAlias = System.getenv("keyAlias") ?: ""
-    }
-    return keyAlias
-}
-
-fun getKeyPassword(): String {
-    var keyPassword = keyProps["keyPassword"].toString()
-    if (keyPassword.isEmpty()) {
-        keyPassword = System.getenv("keyPassword") ?: ""
-    }
-    return keyPassword
-}
-
 
 android {
 
@@ -134,7 +94,6 @@ android {
         buildConfigField("String", "HEAD", "\"${generateGitBuild()}\"")
         buildConfigField("String", "COMMITTED", "\"${allCommitted()}\"")
 
-        // For Dagger injected instrumentation tests in app module
         testInstrumentationRunner = "app.aaps.runners.InjectedTestRunner"
     }
 
@@ -175,31 +134,25 @@ android {
         }
     }
 
-// 定义签名相关函数
-fun getStoreFile(): String = file("../keystore/myrelease.jks").absolutePath
-fun getStorePassword(): String = System.getenv("STORE_PASSWORD") ?: ""
-fun getKeyAlias(): String = "mykey"  // ✅ 与 keytool 中一致
-fun getKeyPassword(): String = System.getenv("KEY_PASSWORD") ?: ""
-
+    // ✅ 修复：签名配置 —— 不设置任何密码或别名，让 injected 参数生效
     signingConfigs {
         create("release") {
-            storeFile = file(getStoreFile())
-            storePassword = getStorePassword()
-            keyAlias = getKeyAlias()
-            keyPassword = getKeyPassword()
+            storeFile = file("../keystore/myrelease.jks")
+            // 注意：以下字段留空！Gradle 会自动使用 -Pandroid.injected.signing.* 参数
+            // storePassword = ...
+            // keyPassword = ...
+            // keyAlias = ...
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.findByName("release")
+            signingConfig = signingConfigs.getByName("release")
         }
-
     }
 
     useLibrary("org.apache.http.legacy")
 
-    //Deleting it causes a binding error
     buildFeatures {
         dataBinding = true
         buildConfig = true
@@ -212,9 +165,6 @@ allprojects {
 }
 
 dependencies {
-    // in order to use internet"s versions you"d need to enable Jetifier again
-    // https://github.com/nightscout/graphview.git
-    // https://github.com/nightscout/iconify.git
     implementation(project(":shared:impl"))
     implementation(project(":core:data"))
     implementation(project(":core:objects"))
@@ -263,21 +213,13 @@ dependencies {
     androidTestImplementation(project(":shared:tests"))
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.org.skyscreamer.jsonassert)
-
     debugImplementation(libs.com.squareup.leakcanary.android)
 
-
     kspAndroidTest(libs.com.google.dagger.android.processor)
-
-    /* Dagger2 - We are going to use dagger.android which includes
-     * support for Activity and fragment injection so we need to include
-     * the following dependencies */
     ksp(libs.com.google.dagger.android.processor)
     ksp(libs.com.google.dagger.compiler)
 
-    // MainApp
     api(libs.com.uber.rxdogtag2.rxdogtag)
-    // Remote config
     api(libs.com.google.firebase.config)
 }
 
@@ -292,4 +234,3 @@ if (!gitAvailable()) {
 if (isMaster() && !allCommitted()) {
     throw GradleException("There are uncommitted changes. Clone sources again as described in wiki and do not allow gradle update")
 }
-
