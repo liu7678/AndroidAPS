@@ -134,12 +134,16 @@ android {
         }
     }
 
-    // ✅ 正确的签名配置：只指定文件路径，其他由 -Pandroid.injected.signing.* 自动注入
+    // ✅ 显式读取 -P 参数（可靠方式）
     signingConfigs {
         create("release") {
             storeFile = file("../keystore/myrelease.jks")
-            // 注意：不要设置 storePassword、keyPassword、keyAlias！
-            // Android Gradle Plugin 会自动使用命令行注入的参数
+            storePassword = project.findProperty("storePassword")?.toString()
+                ?: error("Missing -PstorePassword")
+            keyAlias = project.findProperty("keyAlias")?.toString()
+                ?: error("Missing -PkeyAlias")
+            keyPassword = project.findProperty("keyPassword")?.toString()
+                ?: error("Missing -PkeyPassword")
         }
     }
 
